@@ -2,6 +2,9 @@
 extern crate futures;
 extern crate pretty_env_logger;
 extern crate warp;
+extern crate serde;
+extern crate serde_json;
+#[macro_use] extern crate serde_derive;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
@@ -19,6 +22,12 @@ static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 /// - Key is their id
 /// - Value is a sender of `warp::ws::Message`
 type Users = Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<Message>>>>;
+
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+enum ChatMessage {
+    Send { text: String },
+}
 
 
 fn main() {
@@ -111,13 +120,17 @@ fn user_connected(ws: WebSocket, users: Users) -> impl Future<Item = (), Error =
 
 fn user_message(my_id: usize, msg: Message, users: &Users) {
     // Skip any non-Text messages...
-    let msg = if let Ok(s) = msg.to_str() {
-        s
-    } else{
+    let msg_bytes = msg.to_str().unwrap();
+
+//    let new_msg = format!("<User#{}>: {}", my_id, msg);
+    let msg_result: serde_json::Result<ChatMessage> = serde_json::from_str(msg_bytes);
+    let new_msg: ChatMessage = if let Ok(t) = msg_result {
+        t
+    } else {
+        eprintln!("Failed to decode: {:?}", msg_bytes);
+        eprintln!("Failed to decode: {:?}", msg_result);
         return;
     };
-
-    let new_msg = format!("<User#{}>: {}", my_id, msg);
 
     // New message from this user, send it to everyone else (except same uid)...
     //
@@ -125,7 +138,10 @@ fn user_message(my_id: usize, msg: Message, users: &Users) {
     // appears to have disconnected.
     for (&uid, tx) in users.lock().unwrap().iter() {
         if my_id != uid {
-            match tx.unbounded_send(Message::text(new_msg.clone())) {
+            match tx.unbounded_send(Message::text(
+
+                serde_json::to_string(&new_msg).unwrap())) {
+
                 Ok(()) => (),
                 Err(_disconnected) => {
                     // The tx is disconnected, our `user_disconnected` code
@@ -175,12 +191,13 @@ static INDEX_HTML: &str = r#"
         }
 
         ws.onmessage = function(msg) {
-            message(msg.data);
+            var data = JSON.parse(msg.data);
+            message(data.Send.text);
         };
 
         send.onclick = function() {
             var msg = text.value;
-            ws.send(msg);
+            ws.send(JSON.stringify({"Send": {"text": msg}}));
             text.value = '';
 
             message('<You>: ' + msg);

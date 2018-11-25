@@ -30,6 +30,12 @@ enum ChatMessage {
 }
 
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+enum Responses {
+    NewMessage { by: String, text: String },
+}
+
+
 fn main() {
     pretty_env_logger::init();
 
@@ -132,6 +138,15 @@ fn user_message(my_id: usize, msg: Message, users: &Users) {
         return;
     };
 
+    let text = match new_msg {
+        ChatMessage::Send { text } => text,
+    };
+
+    let response = Responses::NewMessage {
+        by : "someone".to_string(),
+        text : text,
+    };
+
     // New message from this user, send it to everyone else (except same uid)...
     //
     // We use `retain` instead of a for loop so that we can reap any user that
@@ -140,7 +155,7 @@ fn user_message(my_id: usize, msg: Message, users: &Users) {
         if my_id != uid {
             match tx.unbounded_send(Message::text(
 
-                serde_json::to_string(&new_msg).unwrap())) {
+                serde_json::to_string(&response).unwrap())) {
 
                 Ok(()) => (),
                 Err(_disconnected) => {
@@ -192,7 +207,7 @@ static INDEX_HTML: &str = r#"
 
         ws.onmessage = function(msg) {
             var data = JSON.parse(msg.data);
-            message(data.Send.text);
+            message(data.NewMessage.by + ": " + data.NewMessage.text);
         };
 
         send.onclick = function() {
